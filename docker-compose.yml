@@ -129,6 +129,10 @@ services:
     container_name: auth-service
     ports:
       - "8081:8081"
+
+    env_file:
+      - ./auth-service/.env
+
     environment:
       SPRING_PROFILES_ACTIVE: docker
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
@@ -136,6 +140,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       JWT_SECRET: casino_jwt_super_secret_key_2025
       JWT_EXPIRATION_MS: "3600000"
+
     depends_on:
       eureka-server:
         condition: service_healthy
@@ -143,6 +148,7 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+
     networks:
       - casino-net
 
