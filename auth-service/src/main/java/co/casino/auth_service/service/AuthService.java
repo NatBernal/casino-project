@@ -38,6 +38,9 @@ public class AuthService {
     @Autowired
     private KafkaTemplate<String, Object> kafkaTemplate;
 
+    @Autowired
+    private EmailService emailService;
+
     @Value("${jwt.secret}")
     private String jwtSecret;
 
@@ -97,7 +100,9 @@ public class AuthService {
         sessionMFA.setVerified(false);
         sessionMFA.setIpAddress(ipAddress);
 
-        return sessionMFARepository.save(sessionMFA);
+        SessionMFA saved = sessionMFARepository.save(sessionMFA);
+        emailService.sendMfaCode(saved.getEmail(), saved.getMfaSecret());
+        return saved;
     }
 
     // ── VERIFY MFA ────────────────────────────────────────────────

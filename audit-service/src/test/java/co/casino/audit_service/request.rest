@@ -1,0 +1,66 @@
+### BASE URL
+@baseUrl = http://localhost:8084
+
+### 1) HEALTH CHECK
+GET {{baseUrl}}/actuator/health
+
+### 2) CREATE AUDIT LOG
+POST {{baseUrl}}/audit/log
+Content-Type: application/json
+
+{
+	"userId": "u-1001",
+	"action": "LOGIN_SUCCESS",
+	"type": "AUTH",
+	"details": "User logged in with MFA",
+	"severity": "INFO",
+	"sourceService": "auth-service"
+}
+
+### 3) CREATE ANOTHER LOG (WALLET EXAMPLE)
+POST {{baseUrl}}/audit/log
+Content-Type: application/json
+
+{
+	"userId": "u-1001",
+	"action": "DEPOSIT_APPROVED",
+	"type": "WALLET",
+	"details": "Deposit of 50 credits approved",
+	"severity": "INFO",
+	"sourceService": "wallet-service"
+}
+
+### 4) LIST ALL LOGS
+GET {{baseUrl}}/audit/logs
+
+### 5) FILTER LOGS BY USER AND TYPE
+GET {{baseUrl}}/audit/logs?userId=u-1001&type=AUTH
+
+### 6) FILTER LOGS BY DATE RANGE (ISO-8601)
+GET {{baseUrl}}/audit/logs?fromDate=2026-04-01T00:00:00&toDate=2026-12-31T23:59:59
+
+### 7) GENERATE AUDIT REPORT
+POST {{baseUrl}}/audit/reports/generate
+Content-Type: application/json
+
+{
+	"title": "Weekly Security Report",
+	"generatedBy": "admin-user",
+	"fromDate": "2026-04-01T00:00:00",
+	"toDate": "2026-04-14T23:59:59"
+}
+
+### 8) LIST REPORTS
+GET {{baseUrl}}/audit/reports
+
+### 9) GENERATE AUDIT REPORT (LAST 24H EXAMPLE)
+POST {{baseUrl}}/audit/reports/generate
+Content-Type: application/json
+
+{
+	"title": "Last 24 Hours Report",
+	"generatedBy": "audit-admin",
+	"fromDate": "2026-04-13T00:00:00",
+	"toDate": "2026-04-14T00:00:00"
+}
+

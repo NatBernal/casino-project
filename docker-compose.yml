@@ -205,3 +205,21 @@ services:
         condition: service_healthy
     networks:
       - casino-net
+
+  # ── AUDIT SERVICE  (Java · MongoDB) ────────────────────────────────────
+  audit-service:
+    build: ./audit-service
+    container_name: audit-service
+    ports:
+      - "8084:8084"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_DATA_MONGODB_URI=mongodb://casino_admin:casino_secret@mongodb:27017/casino_db?authSource=admin
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - casino-net

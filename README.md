@@ -95,7 +95,26 @@ proyecto-casino/
 │           └── admin_routes.py
 │
 ├── game-service/                      # Node.js · Express · Redis
-│   └── ...
+│   ├── Dockerfile
+│   ├── package.json
+│   └── src/
+│       ├── server.js                  # Entry point — conecta Redis, levanta HTTP, registra en Eureka
+│       ├── app.js                     # Express app — rutas, middlewares, health checks
+│       ├── config/
+│       │   ├── redis.js               # Conexión ioredis con reconexión automática
+│       │   └── eureka.js              # Registro en Eureka (best-effort, no bloquea el arranque)
+│       ├── controllers/
+│       │   └── game.controller.js     # Handlers HTTP: start, hit, stand, state, abandon, history
+│       ├── middleware/
+│       │   ├── auth.middleware.js     # Valida X-User-Id (gateway) o Bearer JWT (desarrollo)
+│       │   └── error.middleware.js    # Manejador global de errores
+│       ├── routes/
+│       │   └── game.routes.js         # GET/POST /game/**  (todas protegidas por auth)
+│       └── services/
+│           ├── blackjack.service.js   # Lógica pura: mazo, puntos, bust, blackjack natural
+│           ├── game.service.js        # Estado de partidas + operaciones Redis
+│           ├── wallet.service.js      # Cliente HTTP para wallet-service
+│           └── audit.service.js       # Cliente HTTP para audit-service (fire-and-forget)
 │
 └── frontend/                          # ⏳ PENDIENTE — Diego
     └── ...
@@ -134,6 +153,9 @@ docker compose up --build mysql eureka-server wallet-service admin-service
 
 # Solo auth-service + sus dependencias
 docker compose up --build mongodb kafka zookeeper eureka-server auth-service
+
+# Solo game-service + sus dependencias
+docker compose up --build redis eureka-server wallet-service game-service
 ```
 
 ### Detener y limpiar volúmenes
@@ -147,6 +169,7 @@ docker compose down -v
 ```bash
 docker compose logs -f auth-service
 docker compose logs -f wallet-service
+docker compose logs -f game-service
 ```
 
 ---
@@ -185,7 +208,9 @@ curl http://localhost:8081/auth/ping
 
 #### 2. Registrar usuario
 ```bash
-curl -X POST http://localhost:8081/auth/register -H "Content-Type: application/json" -d '{"email":"usuario@casino.co","password":"123456","role":"USER"}'
+curl -X POST http://localhost:8081/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"usuario@casino.co","password":"123456","role":"USER"}'
 ```
 Respuesta esperada:
 ```json
@@ -194,12 +219,16 @@ Respuesta esperada:
 
 #### 3. Registrar administrador
 ```bash
-curl -X POST http://localhost:8081/auth/register -H "Content-Type: application/json" -d '{"email":"admin@casino.co","password":"123456","role":"ADMIN"}'
+curl -X POST http://localhost:8081/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@casino.co","password":"123456","role":"ADMIN"}'
 ```
 
 #### 4. Login — inicia flujo MFA
 ```bash
-curl -X POST http://localhost:8081/auth/login -H "Content-Type: application/json" -d '{"email":"usuario@casino.co","password":"123456"}'
+curl -X POST http://localhost:8081/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"usuario@casino.co","password":"123456"}'
 ```
 Respuesta — guarda el `tempCode`:
 ```json
@@ -217,13 +246,16 @@ Respuesta — guarda el `mfaCode`:
 
 #### 6. Verificar MFA — obtiene el JWT
 ```bash
-curl -X POST http://localhost:8081/auth/mfa/verify -H "Content-Type: application/json" -d '{"tempCode":"<tempCode>","mfaCode":"<mfaCode>"}' -v
+curl -X POST http://localhost:8081/auth/mfa/verify \
+  -H "Content-Type: application/json" \
+  -d '{"tempCode":"<tempCode>","mfaCode":"<mfaCode>"}' -v
 ```
 El JWT viene en el header de respuesta: `Authorization: Bearer <token>`
 
 #### 7. Logout
 ```bash
-curl -X POST http://localhost:8081/auth/logout -H "Authorization: Bearer <token>"
+curl -X POST http://localhost:8081/auth/logout \
+  -H "Authorization: Bearer <token>"
 ```
 
 ---
@@ -234,12 +266,16 @@ curl -X POST http://localhost:8081/auth/logout -H "Authorization: Bearer <token>
 
 #### Consultar saldo
 ```bash
-curl http://localhost:8082/wallet/<usuario_id> -H "Authorization: Bearer <token>"
+curl http://localhost:8082/wallet/<usuario_id> \
+  -H "Authorization: Bearer <token>"
 ```
 
 #### Comprar créditos (depósito)
 ```bash
-curl -X POST http://localhost:8082/wallet/deposit -H "Content-Type: application/json" -H "Authorization: Bearer <token>" -d '{"usuario_id":"<usuario_id>","monto_usd":10.0}'
+curl -X POST http://localhost:8082/wallet/deposit \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"usuario_id":"<usuario_id>","monto_usd":10.0}'
 ```
 Respuesta — 1 USD = 1000 créditos:
 ```json
@@ -248,17 +284,22 @@ Respuesta — 1 USD = 1000 créditos:
 
 #### Solicitar retiro
 ```bash
-curl -X POST http://localhost:8082/wallet/withdraw -H "Content-Type: application/json" -H "Authorization: Bearer <token>" -d '{"usuario_id":"<usuario_id>","monto_creditos":5000.0,"cuenta_destino":"1234-5678-9012"}'
+curl -X POST http://localhost:8082/wallet/withdraw \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"usuario_id":"<usuario_id>","monto_creditos":5000.0,"cuenta_destino":"1234-5678-9012"}'
 ```
 
 #### Ejecutar retiro
 ```bash
-curl -X PUT http://localhost:8082/wallet/withdraw/<solicitud_id>/exec -H "Authorization: Bearer <token>"
+curl -X PUT http://localhost:8082/wallet/withdraw/<solicitud_id>/exec \
+  -H "Authorization: Bearer <token>"
 ```
 
 #### Historial de transacciones
 ```bash
-curl http://localhost:8082/wallet/transactions/<usuario_id> -H "Authorization: Bearer <token>"
+curl http://localhost:8082/wallet/transactions/<usuario_id> \
+  -H "Authorization: Bearer <token>"
 ```
 
 #### Documentación interactiva (Swagger)
@@ -274,37 +315,50 @@ http://localhost:8082/docs
 
 #### Listar todos los usuarios
 ```bash
-curl http://localhost:8085/admin/users -H "Authorization: Bearer <token-admin>"
+curl http://localhost:8085/admin/users \
+  -H "Authorization: Bearer <token-admin>"
 ```
 
 #### Listar usuarios por estado
 ```bash
-curl "http://localhost:8085/admin/users?estado=ACTIVO" -H "Authorization: Bearer <token-admin>"
+curl "http://localhost:8085/admin/users?estado=ACTIVO" \
+  -H "Authorization: Bearer <token-admin>"
 ```
 
 #### Ver detalle de un usuario
 ```bash
-curl http://localhost:8085/admin/users/<usuario_id> -H "Authorization: Bearer <token-admin>"
+curl http://localhost:8085/admin/users/<usuario_id> \
+  -H "Authorization: Bearer <token-admin>"
 ```
 
 #### Suspender usuario
 ```bash
-curl -X PUT http://localhost:8085/admin/users/<usuario_id>/suspend -H "Content-Type: application/json" -H "Authorization: Bearer <token-admin>" -d '{"admin_id":"<admin_id>"}'
+curl -X PUT http://localhost:8085/admin/users/<usuario_id>/suspend \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token-admin>" \
+  -d '{"admin_id":"<admin_id>"}'
 ```
 
 #### Activar usuario
 ```bash
-curl -X PUT http://localhost:8085/admin/users/<usuario_id>/activate -H "Content-Type: application/json" -H "Authorization: Bearer <token-admin>" -d '{"admin_id":"<admin_id>"}'
+curl -X PUT http://localhost:8085/admin/users/<usuario_id>/activate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token-admin>" \
+  -d '{"admin_id":"<admin_id>"}'
 ```
 
 #### Generar reporte financiero
 ```bash
-curl -X POST http://localhost:8085/admin/reports -H "Content-Type: application/json" -H "Authorization: Bearer <token-admin>" -d '{"admin_id":"<admin_id>","tipo":"MENSUAL","periodo_inicio":"2026-04-01T00:00:00","periodo_fin":"2026-04-30T23:59:59"}'
+curl -X POST http://localhost:8085/admin/reports \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token-admin>" \
+  -d '{"admin_id":"<admin_id>","tipo":"MENSUAL","periodo_inicio":"2026-04-01T00:00:00","periodo_fin":"2026-04-30T23:59:59"}'
 ```
 
 #### Listar reportes
 ```bash
-curl "http://localhost:8085/admin/reports?admin_id=<admin_id>" -H "Authorization: Bearer <token-admin>"
+curl "http://localhost:8085/admin/reports?admin_id=<admin_id>" \
+  -H "Authorization: Bearer <token-admin>"
 ```
 
 #### Documentación interactiva (Swagger)
@@ -316,7 +370,108 @@ http://localhost:8085/docs
 
 ### game-service — `:8083`
 
-> ⏳ Endpoints pendientes de documentar por Diego.
+> Todas las rutas requieren `Authorization: Bearer <token>`.
+> El servicio implementa Blackjack. Primero debes tener créditos en el wallet.
+>
+> **Nota:** si `audit-service` no está disponible, el juego continúa normalmente — la auditoría es best-effort.
+
+#### Verificar que el servicio está vivo
+```bash
+curl http://localhost:8083/health
+```
+Respuesta esperada:
+```json
+{ "status": "UP", "service": "game-service" }
+```
+
+#### Iniciar partida
+Cobra la apuesta del wallet y reparte las cartas iniciales.
+```bash
+curl -X POST http://localhost:8083/game/start \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"apuesta": 100}'
+```
+Respuesta esperada:
+```json
+{
+  "id": "<partidaId>",
+  "estado": "ACTIVA",
+  "manoJugador": {
+    "cartas": [{"palo":"♠","valor":"A","puntos":11}, {"palo":"♥","valor":"7","puntos":7}],
+    "puntos": 18
+  },
+  "manoDealer": {
+    "cartas": [{"palo":"♦","valor":"K","puntos":10}, {"oculta": true}],
+    "puntos": 10
+  },
+  "apuesta": 100,
+  "pago": null,
+  "creadoEn": "2026-04-14T10:00:00.000Z",
+  "finalizadoEn": null
+}
+```
+Estados posibles al finalizar: `BLACKJACK_JUGADOR`, `BLACKJACK_DEALER`, `JUGADOR_GANO`, `DEALER_GANO`, `EMPATE`, `JUGADOR_SE_PASO`, `DEALER_SE_PASO`, `ABANDONADA`.
+
+#### Pedir carta (hit)
+```bash
+curl -X POST http://localhost:8083/game/<partidaId>/hit \
+  -H "Authorization: Bearer <token>"
+```
+
+#### Plantarse (stand)
+El dealer revela su carta oculta y roba hasta llegar a 17+. Se determina el ganador y se acredita el pago al wallet.
+```bash
+curl -X POST http://localhost:8083/game/<partidaId>/stand \
+  -H "Authorization: Bearer <token>"
+```
+
+#### Consultar estado de una partida
+```bash
+curl http://localhost:8083/game/<partidaId>/state \
+  -H "Authorization: Bearer <token>"
+```
+
+#### Abandonar partida
+Termina la partida activa. El jugador pierde la apuesta.
+```bash
+curl -X POST http://localhost:8083/game/<partidaId>/abandon \
+  -H "Authorization: Bearer <token>"
+```
+
+#### Ver historial de partidas
+Devuelve las últimas 50 partidas del usuario.
+```bash
+curl http://localhost:8083/game/history/<userId> \
+  -H "Authorization: Bearer <token>"
+```
+Respuesta esperada:
+```json
+{
+  "userId": "<userId>",
+  "partidas": [
+    {
+      "id": "<partidaId>",
+      "estado": "JUGADOR_GANO",
+      "apuesta": 100,
+      "pago": 200,
+      "puntosJugador": 20,
+      "puntosDealer": 17,
+      "creadoEn": "2026-04-14T10:00:00.000Z",
+      "finalizadoEn": "2026-04-14T10:01:00.000Z"
+    }
+  ]
+}
+```
+
+#### Tabla de pagos
+
+| Resultado | Pago recibido |
+|---|---|
+| Blackjack natural (jugador) | apuesta × 2.5 |
+| Jugador gana / dealer se pasa | apuesta × 2 |
+| Empate | apuesta × 1 (devuelve la apuesta) |
+| Jugador pierde / se pasa / abandona | 0 |
 
 ---
 
@@ -340,12 +495,13 @@ http://localhost:8085/docs
 
 ## Flujo completo de prueba
 
-Script que ejecuta el flujo completo desde registro hasta retiro:
+Script que ejecuta el flujo completo: registro → login MFA → depósito → partida de blackjack:
 
 ```bash
 #!/bin/bash
 BASE_AUTH="http://localhost:8081/auth"
 BASE_WALLET="http://localhost:8082/wallet"
+BASE_GAME="http://localhost:8083/game"
 
 echo "=== 1. Registrar usuario ==="
 USER_ID=$(curl -s -X POST $BASE_AUTH/register \
@@ -378,6 +534,26 @@ curl -s -X POST $BASE_WALLET/deposit \
 
 echo "=== 6. Consultar saldo ==="
 curl -s $BASE_WALLET/$USER_ID -H "Authorization: $TOKEN" | jq
+
+echo "=== 7. Iniciar partida (apuesta: 100 créditos) ==="
+PARTIDA=$(curl -s -X POST $BASE_GAME/start \
+  -H "Content-Type: application/json" \
+  -H "Authorization: $TOKEN" \
+  -d '{"apuesta":100}')
+echo $PARTIDA | jq
+PARTIDA_ID=$(echo $PARTIDA | jq -r '.id')
+
+echo "=== 8. Pedir carta (hit) ==="
+curl -s -X POST $BASE_GAME/$PARTIDA_ID/hit \
+  -H "Authorization: $TOKEN" | jq
+
+echo "=== 9. Plantarse (stand) ==="
+curl -s -X POST $BASE_GAME/$PARTIDA_ID/stand \
+  -H "Authorization: $TOKEN" | jq
+
+echo "=== 10. Ver historial ==="
+curl -s $BASE_GAME/history/$USER_ID \
+  -H "Authorization: $TOKEN" | jq
 ```
 
 Requiere `jq`: `sudo apt install jq`
@@ -388,11 +564,14 @@ Requiere `jq`: `sudo apt install jq`
 
 | Variable | Valor en Docker | Descripción |
 |---|---|---|
-| `JWT_SECRET` | `casino_jwt_super_secret_key_2025` | Mínimo 32 caracteres para HS256 |
+| `JWT_SECRET` | `casino_jwt_super_secret_2025` | Compartido entre todos los servicios |
 | `SPRING_DATA_MONGODB_URI` | `mongodb://casino_admin:casino_secret@mongodb:27017/casino_db?authSource=admin` | Conexión MongoDB |
 | `DATABASE_URL` | `mysql+pymysql://casino_user:casino_pass@mysql:3306/casino_db` | Conexión MySQL |
-| `KAFKA_BOOTSTRAP_SERVERS` | `kafka:9092` | Solo usado por auth-service |
-| `EUREKA_CLIENT_SERVICEURL_DEFAULTZONE` | `http://eureka-server:8761/eureka/` | Registro de servicios |
+| `KAFKA_BOOTSTRAP_SERVERS` | `kafka:9092` | Usado por auth-service, wallet-service, admin-service |
+| `EUREKA_CLIENT_SERVICEURL_DEFAULTZONE` | `http://eureka-server:8761/eureka/` | Registro de servicios (Java) |
+| `EUREKA_SERVER_URL` | `http://eureka-server:8761/eureka/` | Registro de servicios (Python) |
+| `EUREKA_HOST` / `EUREKA_PORT` | `eureka-server` / `8761` | Registro de servicios (Node.js) |
+| `REDIS_HOST` / `REDIS_PASSWORD` | `redis` / `redis_secret` | Conexión Redis |
 
 ---
 
@@ -400,10 +579,10 @@ Requiere `jq`: `sudo apt install jq`
 
 - **Spring Boot 3.2** + Spring Cloud 2023 (Eureka Client, Kafka)
 - **FastAPI** + SQLAlchemy + PyMySQL
-- **Node.js** + Express
+- **Node.js** + Express + ioredis + eureka-js-client
 - **Netflix Eureka** (service discovery)
-- **Apache Kafka** + Zookeeper (mensajería — usado por auth-service)
+- **Apache Kafka** + Zookeeper (mensajería — auth-service, wallet-service, admin-service)
 - **MySQL 8** (wallet, admin)
 - **MongoDB 4.4** (auth, audit)
-- **Redis 7** (game, sesiones)
+- **Redis 7** (game — estado de partidas e historial)
 - **Docker** + Docker Compose
