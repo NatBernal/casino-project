@@ -229,3 +229,19 @@ services:
         condition: service_healthy
     networks:
       - casino-net
+  # ── FRONTEND ───────────────────────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    container_name: casino-frontend
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_AUTH_URL=http://auth-service:8081
+      - REACT_APP_WALLET_URL=http://wallet-service:8082
+      - REACT_APP_GAME_URL=http://game-service:8083
+    depends_on:
+      - auth-service
+      - wallet-service
+      - game-service
+    networks:
+      - casino-net
