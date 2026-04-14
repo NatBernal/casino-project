@@ -1,14 +1,13 @@
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import text
 from fastapi import HTTPException
 
-from app.models.admin_models import UsuarioSnapshot, Reporte, EstadoUsuario, TipoReporte
+from app.models.admin_models import UsuarioSnapshot, Reporte, EstadoUsuario
 from app.models.schemas import CambioEstadoRequest, ReporteRequest
-from app.kafka.producer import publish_admin_event
 
 
-# ── Usuarios ─────────────────────────────────────────────────────
+# ── Usuarios ──────────────────────────────────────────────────────
 
 def listar_usuarios(
     db: Session,
@@ -29,53 +28,29 @@ def get_usuario(usuario_id: str, db: Session) -> UsuarioSnapshot:
     return u
 
 
-async def suspender_usuario(usuario_id: str, req: CambioEstadoRequest, db: Session) -> UsuarioSnapshot:
+def suspender_usuario(usuario_id: str, req: CambioEstadoRequest, db: Session) -> UsuarioSnapshot:
     usuario = get_usuario(usuario_id, db)
     if usuario.estado == EstadoUsuario.SUSPENDIDO:
         raise HTTPException(status_code=400, detail="El usuario ya está suspendido")
-
     usuario.estado = EstadoUsuario.SUSPENDIDO
     db.commit()
     db.refresh(usuario)
-
-    await publish_admin_event({
-        "event_type": "USUARIO_SUSPENDIDO",
-        "usuario_id": usuario_id,
-        "admin_id": req.admin_id,
-        "nuevo_estado": EstadoUsuario.SUSPENDIDO,
-        "timestamp": datetime.utcnow().isoformat(),
-    })
     return usuario
 
 
-async def activar_usuario(usuario_id: str, req: CambioEstadoRequest, db: Session) -> UsuarioSnapshot:
+def activar_usuario(usuario_id: str, req: CambioEstadoRequest, db: Session) -> UsuarioSnapshot:
     usuario = get_usuario(usuario_id, db)
     if usuario.estado == EstadoUsuario.ACTIVO:
         raise HTTPException(status_code=400, detail="El usuario ya está activo")
-
     usuario.estado = EstadoUsuario.ACTIVO
     db.commit()
     db.refresh(usuario)
-
-    await publish_admin_event({
-        "event_type": "USUARIO_ACTIVADO",
-        "usuario_id": usuario_id,
-        "admin_id": req.admin_id,
-        "nuevo_estado": EstadoUsuario.ACTIVO,
-        "timestamp": datetime.utcnow().isoformat(),
-    })
     return usuario
 
 
 # ── Reportes ──────────────────────────────────────────────────────
-# Los datos financieros vienen de la tabla transacciones del wallet-service
-# que comparte el mismo schema MySQL. En microservicios "puros" se haría
-# via API; aquí se accede directo a MySQL por practicidad académica.
 
 def _query_transacciones(db: Session, inicio: datetime, fin: datetime) -> dict:
-    """Agrega datos financieros del período desde la tabla compartida."""
-    from sqlalchemy import text
-
     resultado = db.execute(text("""
         SELECT
             SUM(CASE WHEN tipo = 'DEPOSITO'  THEN monto_creditos ELSE 0 END) AS comprados,
@@ -94,13 +69,12 @@ def _query_transacciones(db: Session, inicio: datetime, fin: datetime) -> dict:
         "total_creditos_comprados": comprados,
         "total_creditos_apostados": apostados,
         "total_creditos_ganados":   ganados,
-        "balance_global":           apostados - ganados,  # ganancia de la casa
+        "balance_global":           apostados - ganados,
     }
 
 
 def generar_reporte(req: ReporteRequest, db: Session) -> Reporte:
     datos = _query_transacciones(db, req.periodo_inicio, req.periodo_fin)
-
     reporte = Reporte(
         generado_por=req.admin_id,
         tipo=req.tipo,

@@ -1,0 +1,65 @@
+
+### BASE URL
+@baseUrl = http://localhost:8081
+
+### 1. PING - Verificar que el servicio está vivo
+GET {{baseUrl}}/auth/ping
+
+### 2. REGISTER - Registro exitoso
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "testmfa@casino.com",
+  "password": "123456",
+  "role": "USER"
+}
+
+### 3. LOGIN - Solicita MFA (primer paso)
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "testmfa@casino.com",
+  "password": "123456"
+}
+### 4. OBTENER CÓDIGOS MFA - Para obtener el tempCode y mfaSecret desde MongoDB
+GET http://localhost:8081/auth/mfa/code/e7282d79-6b68-4c59-9b12-894853aa987b
+
+### 4. VERIFY MFA - Verifica código MFA y completa login (segundo paso)
+### INSTRUCCIONES:
+### 1. Corre el LOGIN (request #3) y copia el "tempCode" de la respuesta
+### 2. Abre MongoDB: mongosh > use authdb > db.sessions_mfa.findOne()
+### 3. Copia el valor de "mfaSecret" (código de 6 dígitos)
+### 4. Reemplaza TEMPCODE_AQUI y MFACODE_AQUI abajo
+POST {{baseUrl}}/auth/mfa/verify
+Content-Type: application/json
+
+{
+  "tempCode": "e7282d79-6b68-4c59-9b12-894853aa987b",
+  "mfaCode": "137181"
+}
+
+### 5. LOGOUT - Cierra sesión
+### INSTRUCCIONES:
+### 1. Corre VERIFY MFA (request #4) y busca el header "Authorization: Bearer <token>"
+### 2. Copia el token (sin "Bearer ")
+### 3. Reemplaza TOKEN_AQUI abajo
+POST {{baseUrl}}/auth/logout
+Authorization: Bearer e02e5777-4347-4b42-bd68-7b1a04816d09
+
+### 6. VERIFY MFA - Código incorrecto (para probar error 401)
+POST {{baseUrl}}/auth/mfa/verify
+Content-Type: application/json
+
+{
+  "tempCode": "codigo-falso",
+  "mfaCode": "999999"
+}
+
+### 7. LOGOUT - Token inválido (para probar error 401)
+POST {{baseUrl}}/auth/logout
+Authorization: Bearer token-invalido
+
+### 8. PING - Verificar que el servicio sigue disponible
+GET {{baseUrl}}/auth/ping

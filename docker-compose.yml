@@ -1,23 +1,16 @@
-# ─────────────────────────────────────────────────────────────────
-#  Casino Online – docker-compose.yml  (rama Natalia)
-#  Levanta: wallet-service · admin-service · MySQL · Kafka · Eureka
-#
-#  Servicios de otros integrantes (auth, audit, game, api-gateway)
-#  se agregan cuando el equipo integre. Eureka corre como imagen
-#  standalone sin necesidad de build local.
-# ─────────────────────────────────────────────────────────────────
-
 networks:
   casino-net:
     driver: bridge
 
 volumes:
   mysql_data:
+  mongo_data:
+  redis_data:
   kafka_data:
 
 services:
 
-  # ── ZOOKEEPER (requerido por Kafka) ─────────────────────────────
+  # ── ZOOKEEPER ────────────────────────────────────────────────────
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: casino-zookeeper
@@ -36,9 +29,6 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: casino-kafka
-    depends_on:
-      zookeeper:
-        condition: service_healthy
     ports:
       - "9092:9092"
     environment:
@@ -49,12 +39,35 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     volumes:
       - kafka_data:/var/lib/kafka/data
+    depends_on:
+      zookeeper:
+        condition: service_healthy
     networks:
       - casino-net
     healthcheck:
       test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 15s
       timeout: 10s
+      retries: 5
+
+  # ── MONGODB ──────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:4.4
+    container_name: casino-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: casino_admin
+      MONGO_INITDB_ROOT_PASSWORD: casino_secret
+      MONGO_INITDB_DATABASE: casino_db
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - casino-net
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
       retries: 5
 
   # ── MYSQL ────────────────────────────────────────────────────────
@@ -79,9 +92,24 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── EUREKA SERVER (imagen pública, sin build local) ──────────────
-  # Mientras Mileth no comparta su carpeta eureka-server, usamos
-  # esta imagen lista. Expone el dashboard en http://localhost:8761
+  # ── REDIS ────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: casino-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass redis_secret --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - casino-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_secret", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── EUREKA SERVER ────────────────────────────────────────────────
   eureka-server:
     image: steeltoeoss/eureka-server
     container_name: eureka-server
@@ -90,12 +118,35 @@ services:
     networks:
       - casino-net
     healthcheck:
-      test: ["CMD", "wget", "--spider", "http://localhost:8761"]
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8761 || exit 1"]
       interval: 20s
       timeout: 10s
       retries: 10
 
-  # ── WALLET SERVICE  (Natalia · Python · MySQL) ───────────────────
+  # ── AUTH SERVICE  (Java · MongoDB · Kafka) ───────────────────────
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      SPRING_DATA_MONGODB_URI: mongodb://casino_admin:casino_secret@mongodb:27017/casino_db?authSource=admin
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JWT_SECRET: casino_jwt_super_secret_key_2025
+      JWT_EXPIRATION_MS: "3600000"
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - casino-net
+
+  # ── WALLET SERVICE  (Python · MySQL) — sin Kafka ─────────────────
   wallet-service:
     build: ./wallet-service
     container_name: wallet-service
@@ -103,21 +154,18 @@ services:
       - "8082:8082"
     environment:
       DATABASE_URL: mysql+pymysql://casino_user:casino_pass@mysql:3306/casino_db
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka/
       JWT_SECRET: casino_jwt_super_secret_2025
       SERVICE_PORT: "8082"
     depends_on:
       mysql:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
       eureka-server:
         condition: service_healthy
     networks:
       - casino-net
 
-  # ── ADMIN SERVICE  (Natalia · Python · MySQL) ────────────────────
+  # ── ADMIN SERVICE  (Python · MySQL) — sin Kafka ──────────────────
   admin-service:
     build: ./admin-service
     container_name: admin-service
@@ -125,14 +173,33 @@ services:
       - "8085:8085"
     environment:
       DATABASE_URL: mysql+pymysql://casino_user:casino_pass@mysql:3306/casino_db
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka/
       JWT_SECRET: casino_jwt_super_secret_2025
       SERVICE_PORT: "8085"
     depends_on:
       mysql:
         condition: service_healthy
-      kafka:
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - casino-net
+
+  # ── GAME SERVICE  (Node.js · Redis) ──────────────────────────────
+  game-service:
+    build: ./game-service
+    container_name: game-service
+    ports:
+      - "8083:8083"
+    environment:
+      EUREKA_HOST: eureka-server
+      EUREKA_PORT: "8761"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: redis_secret
+      JWT_SECRET: casino_jwt_super_secret_2025
+      PORT: "8083"
+    depends_on:
+      redis:
         condition: service_healthy
       eureka-server:
         condition: service_healthy

@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import py_eureka_client.eureka_client as eureka_client
 from contextlib import asynccontextmanager
@@ -9,8 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.db.database import Base, engine
 from app.routes.admin_routes import router as admin_router
-from app.kafka.producer import stop_producer
-from app.kafka.consumer import start_consumer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── Startup ─────────────────────────────────────────────────
+    # ── Startup ──────────────────────────────────────────────────
     logger.info("Creating database tables...")
     Base.metadata.create_all(bind=engine)
 
@@ -30,14 +27,9 @@ async def lifespan(app: FastAPI):
         instance_host="admin-service",
     )
 
-    logger.info("Starting Kafka consumer...")
-    consumer_task = asyncio.create_task(start_consumer())
-
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────
-    consumer_task.cancel()
-    await stop_producer()
     await eureka_client.stop_async()
     logger.info("admin-service shut down cleanly")
 
